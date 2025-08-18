@@ -1,0 +1,6 @@
+.*
+*.md
+tests
+venv
+Dockerfile
+Dockerfile.distroless

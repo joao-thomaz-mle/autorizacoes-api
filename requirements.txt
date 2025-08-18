@@ -1,0 +1,2 @@
+# Include development requirements (which includes production requirements)
+-r requirements/dev.txt
