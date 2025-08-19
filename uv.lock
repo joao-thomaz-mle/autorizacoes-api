@@ -175,7 +175,7 @@ requires-dist = [
     { name = "black", specifier = ">=22.0.0" },
     { name = "boto3", specifier = "==1.38.34" },
     { name = "botocore", specifier = "==1.38.34" },
-    { name = "docling", specifier = ">=2.44.0" },
+    { name = "docling", extras = ["pdf"], specifier = ">=2.44.0" },
     { name = "fastapi", extras = ["all"], specifier = "==0.116.1" },
     { name = "flake8", specifier = ">=4.0.0" },
     { name = "httpx", specifier = ">=0.27.0" },
