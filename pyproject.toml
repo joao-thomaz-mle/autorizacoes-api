@@ -39,4 +39,5 @@ dependencies = [
     "sqlalchemy>=2.0.42",
     "strands-agents-tools>=0.2.0",
     "docling[pdf]>=2.44.0",
+    "unstructured[pdf]>=0.18.13",
 ]

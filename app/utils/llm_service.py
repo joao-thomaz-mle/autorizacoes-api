@@ -19,6 +19,7 @@ class AnthropicLLMService:
         max_tokens: int,
         temperature: float,
         budget_tokens: int,
+        reasoning: bool = True,
     ) -> None:
         self.model_id = model_id
         self.model_version = model_version
@@ -27,18 +28,20 @@ class AnthropicLLMService:
         self.MAX_TOKENS = max_tokens
         self.TEMPERATURE = temperature
         self.BUDGET_TOKENS = budget_tokens
+        self.REASONING = reasoning
 
     def _config_body(self, input_str: str) -> Dict[str, Any]:
         body = {
             "anthropic_version": self.model_version,
             "max_tokens": self.MAX_TOKENS,
             "temperature": self.TEMPERATURE,
-            "thinking": {"type": "enabled", "budget_tokens": self.BUDGET_TOKENS},
             "system": self.system_prompt,
             "messages": [
                 {"role": "user", "content": [{"type": "text", "text": input_str}]},
             ],
         }
+        if self.REASONING:
+            body["thinking"] = {"type": "enabled", "budget_tokens": self.BUDGET_TOKENS}
         return body
 
     def _safe_extract_json(self, raw_text: str) -> dict:
