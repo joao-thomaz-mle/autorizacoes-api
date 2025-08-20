@@ -1,5 +1,7 @@
 from collections import defaultdict
-from typing import List
+from typing import List, Optional
+
+from app.utils.logger import get_logger
 
 
 class TextractKVExtractor:
@@ -113,3 +115,268 @@ def extract_text_single_id(
         )
         full_text += text
     return full_text
+
+
+class TextractPDFAnalyzer:
+    """
+    Analyzes PDF documents using AWS Textract for forms extraction.
+    Handles multi-page PDFs through asynchronous processing.
+    """
+
+    def __init__(self, textract_client, s3_client, bucket_name: str):
+        """
+        Initialize the PDF analyzer.
+
+        Args:
+            textract_client: Boto3 Textract client
+            s3_client: Boto3 S3 client
+            bucket_name: S3 bucket name for temporary PDF storage
+        """
+        self.textract_client = textract_client
+        self.s3_client = s3_client
+        self.bucket_name = bucket_name
+        self.forms_data = {}
+        self.logger = get_logger(__name__)
+
+    def upload_pdf_to_s3(self, pdf_bytes: bytes, key: str) -> bool:
+        """
+        Upload PDF bytes to S3 bucket.
+
+        Args:
+            pdf_bytes: PDF file as bytes
+            key: S3 object key
+
+        Returns:
+            bool: True if upload successful, False otherwise
+        """
+        try:
+            self.s3_client.put_object(
+                Bucket=self.bucket_name,
+                Key=key,
+                Body=pdf_bytes,
+                ContentType="application/pdf",
+            )
+            self.logger.info(f"PDF uploaded to S3: s3://{self.bucket_name}/{key}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to upload PDF to S3: {e}")
+            return False
+
+    def start_pdf_analysis(
+        self, s3_key: str, client_request_token: Optional[str] = None
+    ) -> str:
+        """
+        Start asynchronous PDF analysis with Textract.
+
+        Args:
+            s3_key: S3 object key where PDF is stored
+            client_request_token: Optional idempotency token
+
+        Returns:
+            str: JobId for tracking the analysis
+        """
+        try:
+            request_params = {
+                "DocumentLocation": {
+                    "S3Object": {"Bucket": self.bucket_name, "Name": s3_key}
+                },
+                "FeatureTypes": ["FORMS"],
+            }
+
+            if client_request_token:
+                request_params["ClientRequestToken"] = client_request_token
+
+            response = self.textract_client.start_document_analysis(**request_params)
+            job_id = response["JobId"]
+
+            self.logger.info(f"Started PDF analysis with JobId: {job_id}")
+            return job_id
+
+        except Exception as e:
+            self.logger.error(f"Failed to start PDF analysis: {e}")
+            raise
+
+    def get_analysis_results(self, job_id: str, max_wait_time: int = 300) -> dict:
+        """
+        Poll for analysis results until completion.
+
+        Args:
+            job_id: JobId from start_pdf_analysis
+            max_wait_time: Maximum time to wait in seconds
+
+        Returns:
+            dict: Complete analysis results
+        """
+        import time
+
+        start_time = time.time()
+
+        while time.time() - start_time < max_wait_time:
+            try:
+                response = self.textract_client.get_document_analysis(JobId=job_id)
+                job_status = response["JobStatus"]
+
+                if job_status == "SUCCEEDED":
+                    self.logger.info(
+                        f"PDF analysis completed successfully for JobId: {job_id}"
+                    )
+
+                    # Handle pagination to get all results
+                    all_blocks = response["Blocks"]
+                    next_token = response.get("NextToken")
+
+                    while next_token:
+                        response = self.textract_client.get_document_analysis(
+                            JobId=job_id, NextToken=next_token
+                        )
+                        all_blocks.extend(response["Blocks"])
+                        next_token = response.get("NextToken")
+
+                    # Return complete response with all blocks
+                    response["Blocks"] = all_blocks
+                    return response
+
+                elif job_status == "FAILED":
+                    self.logger.error(f"PDF analysis failed for JobId: {job_id}")
+                    raise Exception(
+                        f"Textract analysis failed: {response.get('StatusMessage', 'Unknown error')}"
+                    )
+
+                elif job_status == "IN_PROGRESS":
+                    self.logger.info(f"PDF analysis in progress for JobId: {job_id}")
+                    time.sleep(5)  # Wait 5 seconds before next poll
+
+                else:
+                    self.logger.warning(f"Unknown job status: {job_status}")
+                    time.sleep(5)
+
+            except Exception as e:
+                self.logger.error(f"Error polling for results: {e}")
+                raise
+
+        raise TimeoutError(
+            f"PDF analysis timed out after {max_wait_time} seconds for JobId: {job_id}"
+        )
+
+    def extract_forms_data_from_pdf(
+        self, pdf_bytes: bytes, s3_key: Optional[str] = None
+    ) -> dict:
+        """
+        Main method to extract forms data from PDF.
+
+        Args:
+            pdf_bytes: PDF file as bytes
+            s3_key: Optional S3 key. If None, generates timestamp-based key
+
+        Returns:
+            dict: Extracted forms data
+        """
+        import uuid
+        from datetime import datetime
+
+        try:
+            # Generate S3 key if not provided
+            if not s3_key:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                unique_id = str(uuid.uuid4())[:8]
+                s3_key = f"textract_pdfs/{timestamp}_{unique_id}.pdf"
+
+            # Step 1: Upload PDF to S3
+            if not self.upload_pdf_to_s3(pdf_bytes, s3_key):
+                raise Exception("Failed to upload PDF to S3")
+
+            # Step 2: Start analysis
+            client_token = str(uuid.uuid4())
+            job_id = self.start_pdf_analysis(s3_key, client_token)
+
+            # Step 3: Get results
+            analysis_response = self.get_analysis_results(job_id)
+
+            # Step 4: Extract forms data (reuse logic from existing class)
+            self.forms_data = self._extract_key_value_pairs(analysis_response["Blocks"])
+
+            # Step 5: Clean up S3 object (optional)
+            self._cleanup_s3_object(s3_key)
+
+            self.logger.info(
+                f"Successfully extracted forms data from PDF. Found {len(self.forms_data)} key-value pairs"
+            )
+            return self.forms_data
+
+        except Exception as e:
+            self.logger.error(f"Error in PDF forms extraction: {e}")
+            # Attempt cleanup even on error
+            if s3_key:
+                self._cleanup_s3_object(s3_key)
+            raise
+
+    def _extract_key_value_pairs(self, blocks: list) -> dict:
+        """
+        Extract key-value pairs from Textract blocks.
+        Reuses the logic from TextractFormAnalyzer.
+        """
+        key_map = {}
+        value_map = {}
+        block_map = {}
+
+        for block in blocks:
+            block_id = block["Id"]
+            block_map[block_id] = block
+
+            if block["BlockType"] == "KEY_VALUE_SET":
+                if "KEY" in block["EntityTypes"]:
+                    key_map[block_id] = block
+                else:
+                    value_map[block_id] = block
+
+        extracted_data = {}
+
+        for key_block_id, key_block in key_map.items():
+            if "Relationships" in key_block:
+                for relationship in key_block["Relationships"]:
+                    if relationship["Type"] == "VALUE":
+                        value_block_ids = relationship["Ids"]
+
+                        key_text = self._get_text_from_block(key_block, block_map)
+                        value_text = ""
+
+                        for value_block_id in value_block_ids:
+                            value_block = value_map.get(value_block_id)
+                            if value_block:
+                                value_text += self._get_text_from_block(
+                                    value_block, block_map
+                                )
+
+                        if key_text and value_text:
+                            extracted_data[key_text.strip()] = value_text.strip()
+
+        return extracted_data
+
+    def _get_text_from_block(self, block: dict, block_map: dict) -> str:
+        """
+        Extract text from a block using relationships.
+        Reuses the logic from TextractFormAnalyzer.
+        """
+        text = ""
+        if "Relationships" in block:
+            for relationship in block["Relationships"]:
+                if relationship["Type"] == "CHILD":
+                    for child_id in relationship["Ids"]:
+                        child_block = block_map.get(child_id)
+                        if child_block and child_block["BlockType"] == "WORD":
+                            text += child_block["Text"] + " "
+        return text
+
+    def _cleanup_s3_object(self, s3_key: str) -> None:
+        """
+        Delete the temporary PDF from S3.
+        """
+        try:
+            self.s3_client.delete_object(Bucket=self.bucket_name, Key=s3_key)
+            self.logger.info(f"Cleaned up S3 object: s3://{self.bucket_name}/{s3_key}")
+        except Exception as e:
+            self.logger.warning(f"Failed to cleanup S3 object {s3_key}: {e}")
+
+    def get_forms_data(self) -> dict:
+        """Returns the extracted forms data."""
+        return self.forms_data

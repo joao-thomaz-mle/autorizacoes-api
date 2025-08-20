@@ -12,7 +12,8 @@ retorne null ou "Pedido sem OPME" no caso de OPME):
 - "procedimento_autorizado": O nome completo do procedimento principal autorizado.
 - "paciente": O nome completo do paciente.
 - "codigo_autorizado": String contendo o código do procedimento e a quantidade.
-- "senha": O número da senha de autorização. Caso não esteja presente, retorne o numero da guia. Pode estar presente como data de validade VPP
+- "senha": O número da senha de autorização. Caso não esteja presente, retorne o numero da guia.
+Pode estar presente como data de validade VPP
 - "validade_senha": A data de validade da senha.
 - "observacoes_opme": Se houver menção a OPME, transcreva. Caso contrário, retorne "Pedido sem OPME".
 - "observacoes_gerais": O texto do campo "Indicação Clínica".
