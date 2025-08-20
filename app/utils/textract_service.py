@@ -121,9 +121,24 @@ class TextractPDFAnalyzer:
     """
     Analyzes PDF documents using AWS Textract for forms extraction.
     Handles multi-page PDFs through asynchronous processing.
+    
+    Example:
+        # Initialize with your clients
+        pdf_analyzer = TextractPDFAnalyzer(
+            textract_client=textract_client,
+            s3_client=s3_client, 
+            bucket_name="your-bucket-name",
+            bucket_folder="your-folder-name"
+        )
+
+        # Extract forms data from PDF with file identifier
+        forms_data = pdf_analyzer.extract_forms_data_from_pdf(
+            pdf_bytes=pdf_bytes, 
+            file_id="unique_file_identifier"
+        )
     """
 
-    def __init__(self, textract_client, s3_client, bucket_name: str):
+    def __init__(self, textract_client, s3_client, bucket_name: str, bucket_folder: str):
         """
         Initialize the PDF analyzer.
 
@@ -131,11 +146,14 @@ class TextractPDFAnalyzer:
             textract_client: Boto3 Textract client
             s3_client: Boto3 S3 client
             bucket_name: S3 bucket name for temporary PDF storage
+            bucket_folder: S3 folder name for organizing PDFs
         """
         self.textract_client = textract_client
         self.s3_client = s3_client
         self.bucket_name = bucket_name
+        self.bucket_folder = bucket_folder
         self.forms_data = {}
+        self.tables_data = []
         self.logger = get_logger(__name__)
 
     def upload_pdf_to_s3(self, pdf_bytes: bytes, key: str) -> bool:
@@ -180,7 +198,7 @@ class TextractPDFAnalyzer:
                 "DocumentLocation": {
                     "S3Object": {"Bucket": self.bucket_name, "Name": s3_key}
                 },
-                "FeatureTypes": ["FORMS"],
+                "FeatureTypes": ["FORMS", "TABLES"],
             }
 
             if client_request_token:
@@ -259,13 +277,14 @@ class TextractPDFAnalyzer:
         )
 
     def extract_forms_data_from_pdf(
-        self, pdf_bytes: bytes, s3_key: Optional[str] = None
+        self, pdf_bytes: bytes, file_id: str, s3_key: Optional[str] = None
     ) -> dict:
         """
         Main method to extract forms data from PDF.
 
         Args:
             pdf_bytes: PDF file as bytes
+            file_id: Unique identifier to include in the uploaded filename
             s3_key: Optional S3 key. If None, generates timestamp-based key
 
         Returns:
@@ -279,7 +298,7 @@ class TextractPDFAnalyzer:
             if not s3_key:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 unique_id = str(uuid.uuid4())[:8]
-                s3_key = f"textract_pdfs/{timestamp}_{unique_id}.pdf"
+                s3_key = f"{self.bucket_folder}/textract_pdfs/{file_id}_{timestamp}_{unique_id}.pdf"
 
             # Step 1: Upload PDF to S3
             if not self.upload_pdf_to_s3(pdf_bytes, s3_key):
@@ -292,16 +311,27 @@ class TextractPDFAnalyzer:
             # Step 3: Get results
             analysis_response = self.get_analysis_results(job_id)
 
-            # Step 4: Extract forms data (reuse logic from existing class)
+            # Step 4: Extract forms and tables data
             self.forms_data = self._extract_key_value_pairs(analysis_response["Blocks"])
+            self.tables_data = self._extract_tables(analysis_response["Blocks"])
+
+            # Combine forms and tables data
+            combined_data = {
+                "forms": self.forms_data,
+                "tables": self.tables_data,
+                "summary": {
+                    "forms_count": len(self.forms_data),
+                    "tables_count": len(self.tables_data)
+                }
+            }
 
             # Step 5: Clean up S3 object (optional)
             self._cleanup_s3_object(s3_key)
 
             self.logger.info(
-                f"Successfully extracted forms data from PDF. Found {len(self.forms_data)} key-value pairs"
+                f"Successfully extracted data from PDF. Found {len(self.forms_data)} key-value pairs and {len(self.tables_data)} tables"
             )
-            return self.forms_data
+            return combined_data
 
         except Exception as e:
             self.logger.error(f"Error in PDF forms extraction: {e}")
@@ -352,6 +382,64 @@ class TextractPDFAnalyzer:
 
         return extracted_data
 
+    def _extract_tables(self, blocks: list) -> list:
+        """
+        Extract table data from Textract blocks.
+        
+        Returns:
+            list: List of tables, each containing rows with cells
+        """
+        tables = []
+        table_blocks = {}
+        cell_blocks = {}
+        
+        # First pass: organize blocks by type
+        for block in blocks:
+            if block["BlockType"] == "TABLE":
+                table_blocks[block["Id"]] = block
+            elif block["BlockType"] == "CELL":
+                cell_blocks[block["Id"]] = block
+        
+        # Process each table
+        for table_id, table_block in table_blocks.items():
+            # Get all cells for this table
+            table_cells = {}
+            
+            if "Relationships" in table_block:
+                for relationship in table_block["Relationships"]:
+                    if relationship["Type"] == "CHILD":
+                        for cell_id in relationship["Ids"]:
+                            if cell_id in cell_blocks:
+                                cell_block = cell_blocks[cell_id]
+                                row_index = cell_block.get("RowIndex", 0)
+                                col_index = cell_block.get("ColumnIndex", 0)
+                                
+                                # Extract text from cell
+                                cell_text = self._get_text_from_block(cell_block, {block["Id"]: block for block in blocks})
+                                
+                                if row_index not in table_cells:
+                                    table_cells[row_index] = {}
+                                table_cells[row_index][col_index] = cell_text.strip()
+            
+            # Convert to structured format
+            if table_cells:
+                table_data = {
+                    "table_id": table_id,
+                    "rows": []
+                }
+                
+                # Sort rows and columns
+                for row_idx in sorted(table_cells.keys()):
+                    row_data = []
+                    row_cells = table_cells[row_idx]
+                    for col_idx in sorted(row_cells.keys()):
+                        row_data.append(row_cells[col_idx])
+                    table_data["rows"].append(row_data)
+                
+                tables.append(table_data)
+        
+        return tables
+
     def _get_text_from_block(self, block: dict, block_map: dict) -> str:
         """
         Extract text from a block using relationships.
@@ -380,3 +468,18 @@ class TextractPDFAnalyzer:
     def get_forms_data(self) -> dict:
         """Returns the extracted forms data."""
         return self.forms_data
+
+    def get_tables_data(self) -> list:
+        """Returns the extracted tables data."""
+        return self.tables_data
+
+    def get_all_data(self) -> dict:
+        """Returns both forms and tables data in a structured format."""
+        return {
+            "forms": self.forms_data,
+            "tables": self.tables_data,
+            "summary": {
+                "forms_count": len(self.forms_data),
+                "tables_count": len(self.tables_data)
+            }
+        }
