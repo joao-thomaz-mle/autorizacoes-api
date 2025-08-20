@@ -12,11 +12,11 @@ retorne null ou "Pedido sem OPME" no caso de OPME):
 - "procedimento_autorizado": O nome completo do procedimento principal autorizado.
 - "paciente": O nome completo do paciente.
 - "codigo_autorizado": String contendo o código do procedimento e a quantidade.
-- "senha": O número da senha de autorização. Caso não esteja presente, retorne o numero da guia.
+- "senha": O número da senha de autorização. Caso não esteja presente, retorne o numero da guia. Pode estar presente como data de validade VPP
 - "validade_senha": A data de validade da senha.
 - "observacoes_opme": Se houver menção a OPME, transcreva. Caso contrário, retorne "Pedido sem OPME".
 - "observacoes_gerais": O texto do campo "Indicação Clínica".
-- "usuario_finalizador": O nome do profissional solicitante. Se não estiver presente, retorne null.
+- "profissional_solicitante": O nome do profissional solicitante. Se não estiver presente, retorne null.
 
 O JSON de saída deve ter exatamente esta estrutura:
 
@@ -28,6 +28,6 @@ O JSON de saída deve ter exatamente esta estrutura:
   "validade_senha": "...",
   "observacoes_opme": "...",
   "observacoes_gerais": "...",
-  "usuario_finalizador": "..."
+  "profissional_solicitante": "..."
 }
 """
