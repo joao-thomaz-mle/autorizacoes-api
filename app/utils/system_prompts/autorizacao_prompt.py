@@ -24,7 +24,8 @@ Extraia os seguintes campos (se o campo não estiver presente, retorne null ou "
 - "paciente": O nome completo do paciente.
 - "codigo_autorizado": String com códigos e quantidades autorizadas no formato "código1 x qty1, código2 x qty2".
 - "senha": O número da senha de autorização. Caso não esteja presente, retorne o numero da guia.
-- "validade_senha": A data de validade da senha. Caso não exista, procure por algo parecido com validade VPP. Se tambem nao existir, retorne null.
+- "validade_senha": A data de validade da senha. Caso não exista, procure por algo parecido com validade VPP. Se o campo também não existir, retorne null.
+- "data_solicitacao": A data da solicitação. Caso não exista, retorne null.
 - "observacoes_opme": Se houver menção a OPME, transcreva. Caso contrário, retorne "Pedido sem OPME".
 - "observacoes_gerais": O texto do campo "Indicação Clínica" ou observações gerais.
 - "profissional_solicitante": O nome do profissional solicitante ou usuário finalizador.
@@ -36,6 +37,7 @@ EXEMPLO DE SAÍDA:
   "codigo_autorizado": "01009001 x 1, 30907136 x 1",
   "senha": "J5VEYT7",
   "validade_senha": "07/01/2026",
+  "data_solicitacao": "01/01/2026",
   "observacoes_opme": "Pedido sem OPME",
   "observacoes_gerais": "Diária: 01",
   "profissional_solicitante": "TELMA"
@@ -49,6 +51,7 @@ O JSON de saída deve ter exatamente esta estrutura simples com valores em strin
   "codigo_autorizado": "...",
   "senha": "...",
   "validade_senha": "...",
+  "data_solicitacao": "...",
   "observacoes_opme": "...",
   "observacoes_gerais": "...",
   "profissional_solicitante": "..."
