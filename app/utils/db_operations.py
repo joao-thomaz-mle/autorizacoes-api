@@ -1,5 +1,6 @@
 import pandas as pd
-
+from app.services.database.mariadb import MariaDBService
+from app.services.database.oracle import OracleService
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -30,11 +31,11 @@ def load_query_from_file(file_path: str) -> str:
 
     except Exception as e:
         logger.error(f"❌ Error loading query from file: {e}")
-        return None
+        raise
 
 
 def execute_query_to_df(
-    db_service_class, query: str, fetch_limit: int = None
+    db_service_class, query: str, fetch_limit= None
 ) -> pd.DataFrame:
     """
     Executes a query using the provided database service class (OracleService or MariaDBService)
