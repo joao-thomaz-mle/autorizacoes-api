@@ -36,7 +36,7 @@ class AppConstants:
     S3_DEBUG_PREFIX: str = "debug"
     STREAMING: bool = False
     CACHE_PROMPT = "default"
-    RETRIES: Dict[str, int] = field(
+    RETRIES: Dict[str, object] = field(
         default_factory=lambda: {"max_attempts": 3, "mode": "standard"}
     )
     CONNECTION_TIMEOUT: int = 5
